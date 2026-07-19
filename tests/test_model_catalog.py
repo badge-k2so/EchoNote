@@ -23,6 +23,7 @@ class ModelDisclosureTests(unittest.TestCase):
             "pyannote-segmentation-3.0",
             "3dspeaker-eres2net",
             "windows-tts-haruka",
+            "macos-tts-kyoko",
             # 実行エンジン
             "sherpa-onnx",
             "llama-cpp-python",

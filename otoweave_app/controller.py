@@ -102,7 +102,9 @@ class LearningAccessController:
         self._dictionary_entries = load_dictionary(
             dictionary_path(self.store.root)
         )
-        self.ffmpeg = self.project_root / "engines" / "ffmpeg" / "ffmpeg.exe"
+        from .platform_support import resolve_ffmpeg
+
+        self.ffmpeg = resolve_ffmpeg(self.project_root)
         self.player = AudioPlayer(
             on_position=lambda value: self.events.put(("playback_position", value)),
             on_finished=lambda: self.events.put(("playback_finished", None)),

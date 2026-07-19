@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import sys
 import time
 from pathlib import Path
 from collections.abc import Callable
@@ -64,8 +65,30 @@ COLORS = {
 # lesson somehow has more distinct speakers than colors.
 SPEAKER_COLOR_KEYS = ["speaker_1", "speaker_2", "speaker_3", "speaker_4"]
 
-FONT = "Meiryo"
+def _default_ui_font(platform: str = sys.platform) -> str:
+    """OS既定のUIフォント名。
+
+    macOS には Meiryo が存在しないため、標準UIフォントのヒラギノ角ゴシックを
+    使う。Windows側の既定 (Meiryo) は変えない。
+    TODO(platform_support): platform_support.py 導入後は共通の is_macos()
+    判定に置き換える。
+    """
+    if platform == "darwin":
+        return "Hiragino Sans"
+    return "Meiryo"
+
+
+def _undo_key_hint(platform: str = sys.platform) -> str:
+    """文字起こし編集中の「取り消し」操作のキー表示。OSの慣習に合わせる。"""
+    if platform == "darwin":
+        return "Cmd+Z"
+    return "Ctrl+Z"
+
+
+FONT = _default_ui_font()
 BASE_FONT_SIZE = 14
+
+UNDO_KEY_HINT = _undo_key_hint()
 
 
 def theme_color(value: tuple[str, str] | str) -> str:
@@ -1989,7 +2012,7 @@ class MainPane(ctk.CTkFrame):
         self.textbox.insert("1.0", self._editable_transcript)
         self.textbox.focus_set()
         self.status_label.configure(
-            text="編集後に「保存」を押してください。Ctrl+Zも利用できます。"
+            text=f"編集後に「保存」を押してください。{UNDO_KEY_HINT}も利用できます。"
         )
 
     def _cancel_transcript_edit(self) -> None:

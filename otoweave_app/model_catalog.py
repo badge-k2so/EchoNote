@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,6 +163,17 @@ def model_disclosures(project_root: Path) -> list[ModelDisclosure]:
             source_url="https://learn.microsoft.com/dotnet/api/system.speech.synthesis",
             required=False,
             available=os.name == "nt",
+        ),
+        ModelDisclosure(
+            key="macos-tts-kyoko",
+            name="macOS標準音声 Kyoko（say）",
+            purpose="読み上げ（TTS）",
+            license_name="macOS標準機能（OSに同梱）",
+            source_url="https://developer.apple.com/documentation/avfaudio/avspeechsynthesizer",
+            required=False,
+            # TODO(platform_support): platform_support.py 導入後は共通の
+            # is_macos() 判定に置き換える。
+            available=sys.platform == "darwin",
         ),
         ModelDisclosure(
             key="pyannote-segmentation-3.0",

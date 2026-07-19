@@ -4,13 +4,14 @@ import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 import time
 import tkinter.font as tkfont
 from collections.abc import Callable, Mapping
 from datetime import date as date_cls
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import Menu, filedialog, messagebox
 from typing import Any
 
 import customtkinter as ctk
@@ -1624,6 +1625,12 @@ class OtoWeaveApp(ctk.CTk):
         self._build_panes()
         self._enable_drag_and_drop()
         self._apply_display_preferences()
+        if sys.platform == "darwin":
+            # macOSだけ画面上部のネイティブメニューバーを設定する。Windowsは
+            # 従来どおりメニューバー無し。
+            # TODO(platform_support): platform_support.py 導入後は共通の
+            # is_macos() 判定に置き換える。
+            self._setup_mac_menu_bar()
 
         if controller:
             self._load_lessons()
@@ -2140,6 +2147,13 @@ class OtoWeaveApp(ctk.CTk):
 
     def _open_audio_file_dialog(self) -> None:
         assert self.controller is not None
+        if os.name != "nt":
+            # macOS/Linux: Windows専用のPowerShellヘルパーは使えないため、
+            # tkinterのネイティブファイル選択をメインスレッドでモーダル表示する。
+            # TODO(platform_support): platform_support.py 導入後は共通の
+            # is_windows() 判定に置き換える。
+            self._open_audio_file_dialog_native()
+            return
         helper = self.controller.project_root / "scripts" / "production" / "windows_audio_file_dialog.ps1"
         initial = Path.home() / "Documents"
         if not initial.is_dir():
@@ -2185,6 +2199,50 @@ class OtoWeaveApp(ctk.CTk):
                 self._file_dialog_process = None
 
         self.run_background(worker, self._finish_audio_file_dialog)
+
+    def _open_audio_file_dialog_native(self) -> None:
+        """macOS/Linux 向けのファイル選択（tkinter.filedialog）。
+
+        外部プロセスを起動する必要が無く、メインスレッドでモーダル表示して
+        戻り値をそのまま使えるため、Windows版のような別プロセス起動・
+        トグルで閉じる仕組みは不要。拡張子フィルタはWindows版と同じ8形式。
+        """
+        assert self.controller is not None
+        initial = Path.home() / "Documents"
+        if not initial.is_dir():
+            initial = Path.home()
+        self._file_dialog_active = True
+        pattern = " ".join(f"*{ext}" for ext in sorted(AUDIO_EXTENSIONS))
+        try:
+            selected = filedialog.askopenfilename(
+                parent=self,
+                title="音声ファイルを選択",
+                initialdir=str(initial),
+                filetypes=[
+                    ("音声ファイル", pattern),
+                    ("すべてのファイル", "*.*"),
+                ],
+            )
+        except Exception as exc:
+            self._file_dialog_active = False
+            self._show_friendly_error(
+                "取り込み",
+                "ファイル選択の画面を開けませんでした。\n"
+                "もう一度「取込」を押して試してください。",
+                exc,
+            )
+            self.route_to("notes")
+            return
+        self._file_dialog_active = False
+        if not selected:
+            self.main_pane.update_status("ファイル選択を閉じました")
+            self.route_to("notes")
+            return
+        path = Path(selected)
+        self.main_pane.update_status(
+            f"選択しました: {path.name}　文字起こしモードを選んでください"
+        )
+        self.after(150, lambda chosen=path: self._start_selected_audio_import(chosen))
 
     def _finish_audio_file_dialog(self, result: tuple[str, str]) -> None:
         if not self._file_dialog_active:
@@ -2320,6 +2378,28 @@ class OtoWeaveApp(ctk.CTk):
         except (RuntimeError, ValueError) as exc:
             messagebox.showerror("取り込み", str(exc), parent=self)
             self.route_to("notes")
+
+    def _setup_mac_menu_bar(self) -> None:
+        """macOS向けの最小構成のネイティブメニューバー（画面上部）。
+
+        アプリメニューに「OtoWeaveについて」（バージョン/ライセンス画面への
+        導線）を追加し、Tkの作法（`tk::mac::Quit` / `tk::mac::ShowPreferences`
+        への `createcommand`）でQuit（Cmd+Q）と環境設定相当の導線を割り当てる。
+        Windowsではこのメソッド自体が呼ばれないため、Windows側の挙動・UIは
+        一切変わらない。
+        """
+        menu_bar = Menu(self)
+        app_menu = Menu(menu_bar, name="apple")
+        menu_bar.add_cascade(menu=app_menu)
+        app_menu.add_command(label="OtoWeaveについて", command=self._show_about)
+        self.tk.createcommand("tk::mac::ShowPreferences", self._show_about)
+        self.tk.createcommand("tk::mac::Quit", self._on_close)
+        self.config(menu=menu_bar)
+
+    def _show_about(self) -> None:
+        """「OtoWeaveについて」: バージョン/ライセンス情報の画面に遷移する。"""
+        self.route_to("settings")
+        self._show_context("settings", "モデルとライセンス")
 
     def _on_close(self) -> None:
         if getattr(self, "_file_dialog_active", False):

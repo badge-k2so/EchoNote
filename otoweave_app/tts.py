@@ -222,3 +222,208 @@ class WindowsTts:
 
     def close(self) -> None:
         self.stop()
+
+
+class MacTts:
+    """Offline text-to-speech via the macOS built-in `say` command.
+
+    Mirrors WindowsTts: one utterance at a time, a new speak() cancels the
+    previous one, killing the subprocess stops speech immediately, and the
+    text is written to a temp file under the data root (not the shared
+    system temp dir) for the same privacy reason as WindowsTts. `say` ships
+    with every Mac, needs no model download, and stays fully local. The
+    Japanese voice (Kyoko) is used when installed, matching the ja-JP voice
+    OtoWeave uses on Windows; otherwise the system default is used.
+    """
+
+    MAX_CHARS = 20000
+    DEFAULT_VOICE = "Kyoko"
+
+    def __init__(
+        self,
+        on_finished: Callable[[], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+        rate: int = 0,
+        temp_dir: Path | str | None = None,
+    ) -> None:
+        self._on_finished = on_finished
+        self._on_error = on_error
+        self.rate = rate
+        self.temp_dir: Path | None = Path(temp_dir) if temp_dir else None
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen | None = None
+        self._generation = 0
+        self._voice = self.DEFAULT_VOICE if self._voice_available(self.DEFAULT_VOICE) else None
+
+    def _resolve_temp_dir(self) -> str | None:
+        """一時ファイルの作成先を返す。作れない場合は %TEMP% へフォールバック。"""
+        directory = self.temp_dir
+        if directory is None:
+            return None
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return str(directory)
+
+    @staticmethod
+    def _voice_available(voice: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["say", "-v", "?"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return False
+        if result.returncode != 0:
+            return False
+        return any(line.split(maxsplit=1)[:1] == [voice] for line in result.stdout.splitlines())
+
+    @property
+    def speaking(self) -> bool:
+        with self._lock:
+            process = self._process
+        return process is not None and process.poll() is None
+
+    def _words_per_minute(self) -> int:
+        # Windows SAPI rate is roughly -10..10 around a neutral 0; map that
+        # onto `say`'s words-per-minute so the speed slider behaves the same.
+        return max(90, min(360, 180 + int(self.rate) * 12))
+
+    def speak(self, text: str) -> bool:
+        cleaned = readable_text(text).strip()
+        if not cleaned:
+            return False
+        if len(cleaned) > self.MAX_CHARS:
+            cleaned = cleaned[: self.MAX_CHARS]
+        self.stop()
+
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=TTS_TEMP_PREFIX,
+            suffix=".txt",
+            delete=False,
+            dir=self._resolve_temp_dir(),
+        )
+        try:
+            with handle:
+                handle.write(cleaned)
+            text_file = Path(handle.name)
+            command = ["say", "-r", str(self._words_per_minute())]
+            if self._voice:
+                command += ["-v", self._voice]
+            command += ["-f", str(text_file)]
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except Exception as exc:
+            log_exception("読み上げの開始に失敗", exc)
+            Path(handle.name).unlink(missing_ok=True)
+            if self._on_error is not None:
+                self._on_error("読み上げを開始できませんでした。もう一度お試しください。")
+            return False
+        with self._lock:
+            self._generation += 1
+            generation = self._generation
+            self._process = process
+        threading.Thread(
+            target=self._watch,
+            args=(process, text_file, generation),
+            name="tts-watcher",
+            daemon=True,
+        ).start()
+        return True
+
+    def _watch(
+        self,
+        process: subprocess.Popen,
+        text_file: Path,
+        generation: int,
+    ) -> None:
+        try:
+            _stdout, stderr = process.communicate()
+        except Exception:
+            stderr = b""
+        text_file.unlink(missing_ok=True)
+        with self._lock:
+            is_current = generation == self._generation
+            if is_current:
+                self._process = None
+        if not is_current:
+            # A newer speak() superseded this one; its watcher will report.
+            return
+        # `say` returns non-zero when killed for a newer utterance; a real
+        # failure (voice missing etc.) also lands here, so only report when
+        # this utterance was the current one and left an error message.
+        if process.returncode not in (0, None, -9, -15) and self._on_error is not None:
+            message = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            self._on_error(
+                message or "読み上げに失敗しました（音声合成を利用できない可能性があります）。"
+            )
+        if self._on_finished is not None:
+            self._on_finished()
+
+    def stop(self) -> None:
+        with self._lock:
+            process = self._process
+        if process is not None and process.poll() is None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+
+    def close(self) -> None:
+        self.stop()
+
+
+class NullTts:
+    """No-op TTS for platforms without a bundled synthesizer (e.g. Linux).
+
+    Also the harmless fallback when no offline synthesizer is available at
+    all, so the rest of the app never has to special-case a missing TTS."""
+
+    def __init__(
+        self,
+        on_finished: Callable[[], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+        rate: int = 0,
+        temp_dir: Path | str | None = None,
+    ) -> None:
+        self._on_error = on_error
+        self.rate = rate
+        self.temp_dir: Path | None = Path(temp_dir) if temp_dir else None
+
+    speaking = False
+
+    def speak(self, text: str) -> bool:
+        if self._on_error is not None:
+            self._on_error("この環境では読み上げを利用できません。")
+        return False
+
+    def stop(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def create_tts(
+    on_finished: Callable[[], None] | None = None,
+    on_error: Callable[[str], None] | None = None,
+    rate: int = 0,
+    temp_dir: Path | str | None = None,
+):
+    """Return the platform's offline TTS backend (WindowsTts / MacTts /
+    NullTts), so callers do not need their own IS_WINDOWS/IS_MACOS branch."""
+    from .platform_support import IS_MACOS, IS_WINDOWS
+
+    if IS_WINDOWS:
+        return WindowsTts(on_finished=on_finished, on_error=on_error, rate=rate, temp_dir=temp_dir)
+    if IS_MACOS:
+        return MacTts(on_finished=on_finished, on_error=on_error, rate=rate, temp_dir=temp_dir)
+    return NullTts(on_finished=on_finished, on_error=on_error, rate=rate, temp_dir=temp_dir)

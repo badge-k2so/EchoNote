@@ -1,0 +1,24 @@
+# OtoWeave — Apple Silicon (macOS) 実行時依存
+#
+# Windows版 distribution/requirements_dist.txt との違い:
+# - PyAudioWPatch（Windows専用）を含まない。録音・再生は sounddevice/PortAudio を使用
+# - llama-cpp-python はここに含めない。setup_mac.sh が Metal (GPU) を有効にして
+#   別途ビルド・インストールする:
+#     CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --no-binary llama-cpp-python
+# - reazonspeech-k2-asr はここに含めない（PyPI未公開のパッケージのため）。
+#   setup_mac.sh が GitHub から別途インストールする
+#
+# バージョンは Windows版の requirements_dist.txt を下限の目安にしつつ、
+# macOS (arm64) 向けの事前ビルド wheel が確実に存在する範囲で緩めている
+customtkinter>=5.2,<6
+darkdetect>=0.8
+tkinterdnd2>=0.5,<1
+pillow>=10
+numpy>=1.26
+scipy>=1.11
+sounddevice>=0.5
+soundfile>=0.13
+sherpa-onnx>=1.13
+onnxruntime>=1.17
+huggingface-hub>=0.23
+librosa>=0.10

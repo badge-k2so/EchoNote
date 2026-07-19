@@ -13,6 +13,7 @@ from typing import Callable, Iterator
 import numpy as np
 
 from .app_logging import log_exception
+from .platform_support import IS_WINDOWS
 
 
 SAMPLE_RATE = 16_000
@@ -42,8 +43,22 @@ class SpeechChunk:
     samples: np.ndarray
 
 
+def _classify_input_level(normalized: np.ndarray) -> dict[str, float | str]:
+    rms = float(np.sqrt(np.mean(normalized * normalized) + 1e-12))
+    peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
+    if rms < 0.004 or peak > 0.99:
+        state = "Poor"
+    elif rms < 0.012 or peak > 0.92:
+        state = "Caution"
+    else:
+        state = "Good"
+    return {"state": state, "rms": rms, "peak": peak}
+
+
 def measure_audio_input(source: AudioSource, duration_seconds: float = 1.5) -> dict[str, float | str]:
     """Measure a short input sample without retaining audio."""
+    if not IS_WINDOWS:
+        return _measure_audio_input_sd(source, duration_seconds)
     import pyaudiowpatch as pyaudio
 
     pa = pyaudio.PyAudio()
@@ -66,15 +81,7 @@ def measure_audio_input(source: AudioSource, duration_seconds: float = 1.5) -> d
         if source.channels > 1 and samples.size:
             samples = samples.reshape(-1, source.channels).mean(axis=1)
         normalized = samples / 32768.0
-        rms = float(np.sqrt(np.mean(normalized * normalized) + 1e-12))
-        peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
-        if rms < 0.004 or peak > 0.99:
-            state = "Poor"
-        elif rms < 0.012 or peak > 0.92:
-            state = "Caution"
-        else:
-            state = "Good"
-        return {"state": state, "rms": rms, "peak": peak}
+        return _classify_input_level(normalized)
     finally:
         if stream is not None:
             stream.stop_stream()
@@ -82,7 +89,85 @@ def measure_audio_input(source: AudioSource, duration_seconds: float = 1.5) -> d
         pa.terminate()
 
 
+def _measure_audio_input_sd(source: AudioSource, duration_seconds: float) -> dict[str, float | str]:
+    """sounddevice equivalent of measure_audio_input (macOS / Linux)."""
+    import sounddevice as sd
+
+    frames = max(1, int(duration_seconds * source.sample_rate))
+    recording = sd.rec(
+        frames,
+        samplerate=source.sample_rate,
+        channels=source.channels,
+        dtype="int16",
+        device=source.device_index,
+    )
+    sd.wait()
+    samples = recording.astype(np.float32)
+    if source.channels > 1 and samples.size:
+        samples = samples.mean(axis=1)
+    normalized = samples.reshape(-1) / 32768.0
+    return _classify_input_level(normalized)
+
+
+def _default_input_index_sd() -> int:
+    import sounddevice as sd
+
+    device = sd.default.device
+    if isinstance(device, (list, tuple)):
+        device = device[0]
+    try:
+        return int(device)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _available_audio_sources_sd() -> list[AudioSource]:
+    """Enumerate input devices via sounddevice (PortAudio).
+
+    macOS has no built-in loopback: only microphones appear unless the user
+    installed a virtual device such as BlackHole, which we surface as PC音声
+    so the existing loopback UI path keeps working."""
+    try:
+        import sounddevice as sd
+    except ImportError:
+        return []
+
+    try:
+        devices = list(sd.query_devices())
+    except Exception:
+        return []
+
+    default_input = _default_input_index_sd()
+    sources: list[AudioSource] = []
+    for index, info in enumerate(devices):
+        max_inputs = int(info.get("max_input_channels", 0))
+        if max_inputs <= 0:
+            continue
+        name = str(info.get("name", f"Device {index}"))
+        lowered = name.lower()
+        is_loopback = "blackhole" in lowered or "loopback" in lowered or "soundflower" in lowered
+        kind = "loopback" if is_loopback else "microphone"
+        prefix = "PC音声" if is_loopback else "マイク"
+        default_mark = "（既定）" if index == default_input else ""
+        sample_rate = int(info.get("default_samplerate", 0)) or SAMPLE_RATE
+        sources.append(
+            AudioSource(
+                id=f"{kind}:{index}",
+                label=f"{prefix}{default_mark}: {name}",
+                device_index=index,
+                sample_rate=max(1, sample_rate),
+                channels=max(1, min(2, max_inputs)),
+                kind=kind,
+            )
+        )
+    # Surface the default microphone first, matching the Windows ordering.
+    sources.sort(key=lambda s: (s.device_index != default_input, s.device_index))
+    return sources
+
+
 def available_audio_sources() -> list[AudioSource]:
+    if not IS_WINDOWS:
+        return _available_audio_sources_sd()
     try:
         import pyaudiowpatch as pyaudio
     except ImportError:
@@ -160,6 +245,31 @@ def process_audio_samples(
         values *= agc_gain
 
     return np.clip(np.rint(values), -32768, 32767).astype(np.int16)
+
+
+class _SoundDeviceInputStream:
+    """Adapts a sounddevice RawInputStream to the small pyaudio-stream API
+    (start_stream/stop_stream/close) that AudioRecorder relies on, so the
+    rest of the recorder does not need to know which backend is live."""
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+
+    def start_stream(self) -> None:
+        self._stream.start()
+
+    def stop_stream(self) -> None:
+        self._stream.stop()
+
+    def close(self) -> None:
+        self._stream.close()
+
+
+class _NullAudioBackend:
+    """Placeholder for the pyaudio instance handle; sounddevice needs none."""
+
+    def terminate(self) -> None:
+        pass
 
 
 class AdaptiveVad:
@@ -314,12 +424,17 @@ class AudioRecorder:
             self._last_error_monotonic = now
             self.on_error(message)
 
-    def start(self) -> None:
-        import pyaudiowpatch as pyaudio
+    def _enqueue_audio(self, data: bytes) -> None:
+        if not self._stopping.is_set() and not self._failed.is_set():
+            try:
+                self._queue.put_nowait(data)
+            except queue.Full:
+                self._report_throttled_error(
+                    "Audio buffer is full. A short section may be missing."
+                )
 
-        self.output_pcm.parent.mkdir(parents=True, exist_ok=True)
-        self._file = self.output_pcm.open("wb")
-        frames_per_buffer = max(320, self.source.sample_rate // 10)
+    def _open_stream_pyaudio(self, frames_per_buffer: int) -> None:
+        import pyaudiowpatch as pyaudio
 
         def callback(in_data, frame_count, time_info, status_flags):
             del frame_count, time_info
@@ -328,33 +443,61 @@ class AudioRecorder:
             self._last_data_monotonic = time.monotonic()
             if status_flags:
                 self._report_throttled_error(f"Audio input status: {status_flags}")
-            if not self._stopping.is_set() and not self._failed.is_set():
-                try:
-                    self._queue.put_nowait(in_data)
-                except queue.Full:
-                    self._report_throttled_error(
-                        "Audio buffer is full. A short section may be missing."
-                    )
+            self._enqueue_audio(in_data)
             return (None, pyaudio.paContinue)
 
-        try:
-            self._pa = pyaudio.PyAudio()
-            self._stream = self._pa.open(
-                format=pyaudio.paInt16,
+        self._pa = pyaudio.PyAudio()
+        self._stream = self._pa.open(
+            format=pyaudio.paInt16,
+            channels=self.source.channels,
+            rate=self.source.sample_rate,
+            input=True,
+            input_device_index=self.source.device_index,
+            frames_per_buffer=frames_per_buffer,
+            stream_callback=callback,
+        )
+
+    def _open_stream_sounddevice(self, frames_per_buffer: int) -> None:
+        import sounddevice as sd
+
+        def callback(indata, frame_count, time_info, status):
+            del frame_count, time_info
+            self._last_data_monotonic = time.monotonic()
+            if status:
+                self._report_throttled_error(f"Audio input status: {status}")
+            # indata is a CFFI buffer of interleaved int16; copy it out to a
+            # bytes object because the buffer is reused after the callback.
+            self._enqueue_audio(bytes(indata))
+
+        self._pa = _NullAudioBackend()
+        self._stream = _SoundDeviceInputStream(
+            sd.RawInputStream(
+                samplerate=self.source.sample_rate,
                 channels=self.source.channels,
-                rate=self.source.sample_rate,
-                input=True,
-                input_device_index=self.source.device_index,
-                frames_per_buffer=frames_per_buffer,
-                stream_callback=callback,
+                dtype="int16",
+                blocksize=frames_per_buffer,
+                device=self.source.device_index,
+                callback=callback,
             )
+        )
+
+    def start(self) -> None:
+        self.output_pcm.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.output_pcm.open("wb")
+        frames_per_buffer = max(320, self.source.sample_rate // 10)
+
+        try:
+            if IS_WINDOWS:
+                self._open_stream_pyaudio(frames_per_buffer)
+            else:
+                self._open_stream_sounddevice(frames_per_buffer)
         except Exception:
             # Release everything acquired so far: a leaked file handle keeps
             # the lesson folder undeletable on Windows.
             if self._stream is not None:
                 try:
                     self._stream.close()
-                except OSError:
+                except Exception:
                     pass
                 self._stream = None
             if self._pa is not None:

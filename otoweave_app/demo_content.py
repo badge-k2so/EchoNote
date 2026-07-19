@@ -112,6 +112,11 @@ class DemoContent:
             "This can cause shortages of doctors, nurses, and teachers. "
             "Think about one possible solution with your partner."
         )
+        from .platform_support import IS_WINDOWS
+
+        if not IS_WINDOWS:
+            DemoContent._synthesize_demo_audio_say(audio_path, text)
+            return
         script = (
             "$ErrorActionPreference='Stop';"
             "Add-Type -AssemblyName System.Speech;"
@@ -140,5 +145,27 @@ class DemoContent:
             message = (
                 result.stderr.decode("utf-8", errors="replace").strip()
                 or "Windows音声合成でデモ音声を作成できませんでした。"
+            )
+            raise RuntimeError(message)
+
+    @staticmethod
+    def _synthesize_demo_audio_say(audio_path: Path, text: str) -> None:
+        """macOS/Linux demo audio via the built-in `say` command (16 kHz
+        mono little-endian PCM WAVE, so the stdlib wave module can read it)."""
+        result = subprocess.run(
+            [
+                "say",
+                "-o", str(audio_path),
+                "--file-format=WAVE",
+                "--data-format=LEI16@16000",
+                text,
+            ],
+            capture_output=True,
+            timeout=45,
+        )
+        if result.returncode != 0 or not audio_path.is_file():
+            message = (
+                result.stderr.decode("utf-8", errors="replace").strip()
+                or "音声合成（say）でデモ音声を作成できませんでした。"
             )
             raise RuntimeError(message)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import sys
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable
 
@@ -12,12 +13,26 @@ TEXT_WIDTHS = ("Wide", "Reading Width")
 COLOR_MODES = ("Light", "Dark")
 
 
+def _default_font_family(platform: str = sys.platform) -> str:
+    """既定の表示フォント。設定ファイルが無い初回起動時に使われる。
+
+    macOS にしか無い Windows フォント（Yu Gothic UI）を既定にすると、
+    Mac初回起動時に存在しないフォント名が選択済み扱いになってしまうため、
+    OS既定のヒラギノ角ゴシックを返す。Windows/Linuxの既定値は変えない。
+    """
+    # TODO(platform_support): platform_support.py 導入後は共通の
+    # is_macos() 判定に置き換える。
+    if platform == "darwin":
+        return "Hiragino Sans"
+    return "Yu Gothic UI"
+
+
 @dataclass
 class DisplaySettings:
     text_size: str = "Standard"
     line_spacing: str = "Comfortable"
     text_width: str = "Reading Width"
-    font_family: str = "Yu Gothic UI"
+    font_family: str = field(default_factory=_default_font_family)
     color_mode: str = "Light"
     live_follow: bool = True
     highlight_current: bool = True
@@ -36,6 +51,10 @@ def available_reading_fonts(installed: Iterable[str]) -> tuple[str, ...]:
         ),
         ("BIZ UDP",),
         ("OpenDyslexic", "Open Dyslexic"),
+        # macOS 標準の日本語UIフォント。Windows 環境の installed には現れない
+        # ため、この並びを追加しても Windows 側の候補・順序は変わらない。
+        ("Hiragino Sans",),
+        ("Hiragino Kaku Gothic ProN",),
         ("Yu Gothic UI",),
         ("Meiryo UI",),
     )

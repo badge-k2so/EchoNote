@@ -21,12 +21,17 @@ import numpy as np
 
 from .app_logging import log_exception
 from .audio import SAMPLE_RATE, SpeechChunk
-from .windows_job import assign_process_to_job, create_kill_on_close_job
+from .platform_support import (
+    assign_process_to_job,
+    child_popen_kwargs,
+    create_kill_on_close_job,
+    executable_name,
+)
 
 
 QWEN3_ASR_17_MODEL = Path("models/qwen3-asr-gguf/Qwen3-ASR-1.7B-Q8_0.gguf")
 QWEN3_ASR_17_MMPROJ = Path("models/qwen3-asr-gguf/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf")
-QWEN3_ASR_SERVER = Path("engines/llama-b9763-cpu/llama-server.exe")
+QWEN3_ASR_SERVER = Path("engines/llama-b9763-cpu") / executable_name("llama-server")
 SPEECHBRAIN_LANGUAGE_ID_DIR = Path("models/speechbrain-lang-id-voxlingua107-ecapa-onnx")
 
 
@@ -323,6 +328,7 @@ class Qwen3AsrRecognizer:
                 stdout=self._stdout,
                 stderr=self._stderr,
                 creationflags=creationflags,
+                **child_popen_kwargs(),
             )
         except Exception:
             self.close()

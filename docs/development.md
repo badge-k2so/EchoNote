@@ -224,6 +224,47 @@ recording. Measured on an i5-1145G7 with 4 threads: RTF 0.174 (a
 expected to be slower (roughly 2-4x has been estimated but not yet
 measured on such hardware).
 
+## macOS (Apple Silicon) — Test Build
+
+A macOS port targeting Apple Silicon (M1/M2/M3, 8 GB RAM class, for N Koukou
+testers) is under active development on the `mac-port-m2` branch. Status is
+**under verification** — it has not yet had significant real-machine testing,
+so treat timings and stability as unconfirmed until a tester reports back.
+
+Setup (one time):
+
+```bash
+./setup_mac.sh          # Homebrew python@3.12/ffmpeg, venv, deps,
+                         # Metal-enabled llama-cpp-python, ReazonSpeech K2
+./verify_setup_mac.sh   # re-run any time to check what's missing
+```
+
+Launch:
+
+```bash
+./run_otoweave.sh
+```
+
+Differences from Windows: recording/playback uses `sounddevice`/PortAudio
+instead of PyAudioWPatch; text-to-speech uses `say -v Kyoko` instead of the
+Windows System.Speech voice; `llama-cpp-python` is built from source with
+`CMAKE_ARGS="-DGGML_METAL=on"` for GPU-accelerated summaries/chat on Apple
+Silicon. `reazonspeech-k2-asr` is not published on PyPI, so `setup_mac.sh`
+installs it straight from the GitHub subdirectory
+(`reazon-research/ReazonSpeech`, `pkg/k2-asr`); if that install fails,
+Japanese live ASR may be unavailable while English/summary/chat/TTS still
+work.
+
+Models are `.gitignore`d and not part of the clone; they must be copied from
+a developer-provided archive into `models/` and `hf-cache/` (see
+`distribution/docs/モデル構成.md` for the exact file list — the Mac test
+build uses the same model set as the Windows standard distribution: ReazonSpeech
+K2, Parakeet, SpeechBrain language ID, Qwen3.5-2B/4B, and the two diarization
+models; the optional 9B model is not needed on 8 GB machines).
+
+Full tester instructions (in Japanese, written for testers with minimal
+terminal experience) are in `distribution/docs/Macテスト手順書.md`.
+
 ## Folder Layout
 
 ```text

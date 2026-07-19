@@ -87,29 +87,9 @@ _GENERIC_JAPANESE_QUERY_PHRASES = (
 
 
 def _total_physical_ram_bytes() -> int:
-    try:
-        import ctypes
+    from .platform_support import total_physical_ram_bytes
 
-        class MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-
-        status = MEMORYSTATUSEX()
-        status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-            return int(status.ullTotalPhys)
-    except Exception:
-        pass
-    return 0
+    return total_physical_ram_bytes()
 
 
 _LOW_MEMORY_THRESHOLD_BYTES = int(11.5 * 1024**3)
@@ -738,6 +718,8 @@ def _run_summary_process(
     - The run fails when no output arrives for `idle_timeout` seconds
       (any stdout/stderr line resets the clock) or after `total_timeout`
       seconds overall."""
+    from .platform_support import child_popen_kwargs
+
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     process = subprocess.Popen(
         command,
@@ -748,6 +730,7 @@ def _run_summary_process(
         errors="replace",
         cwd=str(cwd),
         creationflags=creationflags,
+        **child_popen_kwargs(),
     )
     if on_process is not None:
         on_process(process)
@@ -824,7 +807,9 @@ def _run_summary_process(
                 "パソコンが混み合っているか、処理が止まっている可能性があります。"
             )
         if timeout_message:
-            process.kill()
+            from .platform_support import terminate_child_process
+
+            terminate_child_process(process)
             process.wait()
             for reader in readers:
                 reader.join(timeout=5.0)
@@ -876,6 +861,12 @@ def run_summarize_subprocess(
         # 4B keeps the script's own defaults, unchanged.
         command += ["--max_tokens_part", str(profile["max_tokens_part"])]
         command += ["--max_tokens_final", str(profile["max_tokens_final"])]
+    from .platform_support import IS_MACOS
+
+    if IS_MACOS:
+        # llama.cpp's Metal backend is opt-in: -1 offloads every layer to
+        # the GPU. Windows (CPU-only build) keeps the script's own default.
+        command += ["--n_gpu_layers", "-1"]
     result = _run_summary_process(
         command,
         cwd=project_root,
@@ -944,6 +935,12 @@ def run_template_summarize_subprocess(
         # Only the 9B tier gets this override (see summarize_llm_profile);
         # 4B keeps the script's own --max_tokens_part default, unchanged.
         command += ["--max_tokens_part", str(profile["max_tokens_part"])]
+    from .platform_support import IS_MACOS
+
+    if IS_MACOS:
+        # llama.cpp's Metal backend is opt-in: -1 offloads every layer to
+        # the GPU. Windows (CPU-only build) keeps the script's own default.
+        command += ["--n_gpu_layers", "-1"]
     result = _run_summary_process(
         command,
         cwd=project_root,

@@ -14,7 +14,12 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .windows_job import assign_process_to_job, create_kill_on_close_job
+from .platform_support import (
+    IS_MACOS,
+    assign_process_to_job,
+    create_kill_on_close_job,
+    terminate_child_process,
+)
 
 
 class LlmSession:
@@ -63,11 +68,7 @@ class LlmSession:
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen) -> None:
-        try:
-            if process.poll() is None:
-                process.kill()
-        except OSError:
-            pass
+        terminate_child_process(process)
 
     def cancel_summary(self) -> bool:
         """Request cancellation of the running summary. Safe to call when
@@ -163,12 +164,19 @@ class LlmSession:
                         self._release_locked()
                         from llama_cpp import Llama  # type: ignore[import-not-found]
                         thread_config = select_asr_threads("file")
+                        llama_kwargs: dict[str, Any] = {}
+                        if IS_MACOS:
+                            # llama.cpp's Metal backend is opt-in: -1
+                            # offloads every layer to the GPU. Windows
+                            # keeps the previous behaviour (CPU only).
+                            llama_kwargs["n_gpu_layers"] = -1
                         self._llm = Llama(
                             model_path=str(model_path),
                             n_ctx=4096,
                             n_threads=thread_config.num_threads,
                             n_batch=256,
                             verbose=False,
+                            **llama_kwargs,
                         )
                         self._model_path = model_path
                 if not self._chat_messages:

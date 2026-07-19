@@ -232,6 +232,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learner_final_group_size", type=int, default=3, help="Number of part summaries per intermediate learner summary")
     parser.add_argument("--n_threads", type=int, default=4, help="CPU threads for llama_cpp inference. 4 is safe for 8GB GIGA tablets.")
     parser.add_argument("--n_batch", type=int, default=256, help="Prompt evaluation batch size. Lower values reduce peak RAM on 8GB machines.")
+    parser.add_argument("--n_gpu_layers", type=int, default=0, help="Metal/CUDA GPU layers for llama_cpp. 0 = CPU only (Windows default); macOS passes -1 to offload every layer to Metal.")
     parser.add_argument("--max_tokens_learner_summary", type=int, default=900)
     parser.add_argument("--max_tokens_learner_final", type=int, default=1400)
     parser.add_argument("--max_tokens_core_terms", type=int, default=450)
@@ -2846,6 +2847,7 @@ def main() -> int:
             n_ctx=args.n_ctx,
             n_threads=args.n_threads,
             n_batch=args.n_batch,
+            n_gpu_layers=args.n_gpu_layers,
             verbose=False,
         )
         load_sec = time.perf_counter() - load_start
