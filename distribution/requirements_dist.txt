@@ -1,0 +1,16 @@
+# OtoWeave プロトタイプ配布用の実行時依存（開発機の動作確認済みバージョンで固定）
+# wheels/ フォルダからオフラインでインストールされます。
+customtkinter==5.2.2
+darkdetect==0.8.0
+tkinterdnd2==0.5.0
+pillow==12.2.0
+numpy==2.4.6
+scipy==1.17.1
+sounddevice==0.5.5
+soundfile==0.13.1
+PyAudioWPatch==0.2.12.8
+sherpa-onnx==1.13.2
+onnxruntime==1.26.0
+huggingface-hub==1.16.1
+librosa==0.11.0
+llama-cpp-python==0.3.23

@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# 大容量: モデル・実行エンジン・ダウンロード・実行結果
+models/
+_downloads/
+runs/
+Testdata/
+engines/
+hf-cache/
+*.gguf
+*.onnx
+
+# 音声ファイル（授業・面談の実録音を含むため追跡しない）
+*.ogg
+*.opus
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# 個人情報を含む実録音の文字起こし（日付を問わず汎用的に保護）
+20260522*
+2025-12-21*
+*_transcript.txt
+*面談*
+*インタビュー*
+
+# エージェント/エディタのローカル設定（開発機のパス・ユーザー名を含む）
+.claude/
+.agents/
+*settings.local.json
+
+# 発表用資料（マイプロ関連はGit管理しない）・生成画像
+Gemini_Generated_*
+*マイプロ*
+
+# 配布パッケージの出力（build_distribution.ps1）
+dist/
+
+# 動画制作用の作業ツール
+.video_tools/
+
+# 秘密情報（誤追加防止）
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ローカル設定・一時ファイル
+*.log
+*.tmp
+docs/video/
+docs/images/echonote-mechanism.png

@@ -1,0 +1,8 @@
+numpy
+scipy
+sounddevice
+PyAudioWPatch==0.2.12.8
+sherpa-onnx
+
+# Japanese mode also requires the local ReazonSpeech K2 environment installed by:
+#   .\scripts\prototypes\setup_reazon_k2.ps1
